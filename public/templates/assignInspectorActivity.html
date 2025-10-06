@@ -1,0 +1,438 @@
+<h3>{{ labels.Title }}</h3>
+<el-form ref="form"
+    :model="FormData"
+         class="WorkflowDesignerWindowForm"
+    label-position="top"
+    label-width="150px">
+    <div class="SettingsWithPadding">
+        <div class="el-form--inline el-form--label-top">
+      <el-form-item :label="labels.Name" :rules="activityNameRules()" class="el-form-item" prop="Name" style="flex-grow: 1;">
+        <el-input v-model="FormData.Name" :placeholder="labels.Name" :readonly="readonly" @input="nameOnChange"></el-input>
+      </el-form-item>
+      <el-form-item :label="labels.State" class="el-form-item" prop="State" style="flex-grow: 1;">
+        <el-input v-model="FormData.State" :placeholder="labels.State" :readonly="readonly"></el-input>
+      </el-form-item>
+    </div>
+    <!-- Inspector dropdown -->
+    <el-form-item :label="labels.Type" class="el-form-item" prop="Type" style="flex-grow: 1;">
+      <el-select v-model="FormData.Type" :placeholder="labels.Type" :disabled="readonly">
+        <el-option v-for="inspector in inspectors" :key="inspector.value" :label="inspector.label" :value="inspector.value"></el-option>
+      </el-select>
+    </el-form-item>
+  </div>
+
+  <div style="margin-bottom: 10px;">
+    <el-button v-if="!readonly && !itemHasComment" circle icon="el-icon-s-comment" @click="showUserComment()"></el-button>
+    <h4 v-if="itemHasComment" style="padding-bottom: 1px;border-bottom: 1px solid rgba(34,36,38,.15);">{{ labels.UserComment }}</h4>
+    <el-input
+      v-if="itemHasComment"
+      v-model="FormData.UserComment"
+      :placeholder="labels.UserComment"
+      rows="5"
+      type="textarea"
+    >
+    </el-input>
+  </div>
+</el-form>
+<div class="WorkflowDesignerButtons">
+  <el-button v-if="!readonly" type="primary" @click="onSave">{{ ButtonTextSave }}</el-button>
+  <el-button @click="onClose">{{ ButtonTextCancel }}</el-button>
+</div>
+<script type="application/javascript">
+  function assignInspectorActivity_Init(me) {
+    me.VueConfig.methods.UpdateLanguage = function () {
+      me.VueConfig.data = Object.assign(me.VueConfig.data, {
+        labels: WorkflowDesignerConstants.ActivityFormLabel,
+        ButtonTextSave: WorkflowDesignerConstants.ButtonTextSave,
+        ButtonTextCancel: WorkflowDesignerConstants.ButtonTextCancel,
+        ButtonTextCreate: WorkflowDesignerConstants.ButtonTextCreate,
+        ButtonTextDelete: WorkflowDesignerConstants.ButtonTextDelete,
+        SwitchToDefaultMode: WorkflowDesignerConstants.SwitchToDefaultMode,
+        SwitchToExpertMode: WorkflowDesignerConstants.SwitchToExpertMode
+      });
+    }
+
+    me.VueConfig.methods.UpdateLanguage();
+    me.VueConfig.data = Object.assign(me.VueConfig.data, {
+      readonly: false,
+      expertMode: false,
+      actions: [],
+      activities: [],
+      inspectors: [],
+      states: [],
+      editItem: null,
+      itemHasComment: false,
+      FormData: {},
+      actionsStore: me.graph.data.CodeActions,
+      disableAllPersist: false,
+      isIndeterminate: false,
+      persists: [],
+      checkedPersists: []
+    });
+
+        me.VueConfig.watch = {
+            actionsStore:function(val) {
+                me.VueConfig.data.actions = me.graph.getActionNames();
+            },
+        }
+
+      // Load inspectors from backend api
+      fetch('http://localhost:5139/api/user/inspectors')
+        .then(response => response.json())
+        .then(data => {
+          if(data.length > 0){
+            me.VueConfig.data.inspectors = data.map(name => ({
+              label: name,
+              value: name
+            }));
+          }
+          else{
+            me.VueConfig.data.inspectors = [{ label: 'No inspectors available', value: '' }];
+          } 
+        })
+        .catch(error => {
+          console.error('Error fetching inspector list:', error);
+          return null;
+        });
+
+        me.VueConfig.methods.onUpdate = function(item){
+            var formdata = me.VueConfig.data.FormData;
+            formdata.Name = item.Name;
+      formdata.ExecutionTimeout = item.ExecutionTimeout ? WorkflowDesignerCommon.clone(item.ExecutionTimeout) : {RetryCount: '1'};
+      formdata.IdleTimeout = item.IdleTimeout ? WorkflowDesignerCommon.clone(item.IdleTimeout) : {RetryCount: '1'};
+      // formdata.ExceptionsHandler = item.ExceptionsHandler ? WorkflowDesignerCommon.clone(item.ExceptionsHandler) : {RetryCount:"1", Exceptions:[]};
+      formdata.ExceptionsHandlers = Array.isArray(item.ExceptionsHandlers) ? WorkflowDesignerCommon.clone(item.ExceptionsHandlers) : [];
+      formdata.State = item.State;
+      formdata.IsInitial = item.IsInitial;
+      formdata.IsFinal = item.IsFinal;
+      formdata.IsForSetState = item.IsForSetState;
+      formdata.IsAutoSchemeUpdate = item.IsAutoSchemeUpdate;
+      formdata.DisablePersistState = item.DisablePersistState;
+      formdata.DisablePersistTransitionHistory = item.DisablePersistTransitionHistory;
+      formdata.DisablePersistParameters = item.DisablePersistParameters;
+      formdata.UserComment = item.UserComment;
+      formdata.Implementation = Array.isArray(item.Implementation) ? WorkflowDesignerCommon.clone(item.Implementation) : [];
+          formdata.PreExecutionImplementation = Array.isArray(item.PreExecutionImplementation) ? WorkflowDesignerCommon.clone(item.PreExecutionImplementation) : [];
+          formdata.Annotations = Array.isArray(item.Annotations) ? WorkflowDesignerCommon.clone(item.Annotations) : [];
+
+          me.linkItem = item;
+          me.VueConfig.data.originalItem = WorkflowDesignerCommon.clone(formdata);
+          me.VueConfig.data.prevName = item.Name;
+          me.VueConfig.data.readonly = me.graph.Settings.readonly;
+          me.VueConfig.data.actions = me.graph.getActionNames();
+          me.VueConfig.data.itemHasComment = formdata.UserComment != null && formdata.UserComment.length > 0;
+
+          const {activities, states} = me.VueConfig.data;
+          me.graph.data.Activities.forEach(({Name, State}) => {
+            if (item.Name === Name) return;
+
+            if (!activities.includes(Name)) activities.push(Name);
+            if (State && !states.includes(State)) states.push(State);
+          });
+
+          activities.sort();
+          states.sort();
+
+          me.VueConfig.data.disableAllPersist = formdata.DisablePersistState && formdata.DisablePersistTransitionHistory && formdata.DisablePersistParameters;
+          me.VueConfig.data.isIndeterminate = formdata.DisablePersistState || formdata.DisablePersistTransitionHistory || formdata.DisablePersistParameters;
+          me.VueConfig.data.persists = [
+            me.VueConfig.data.labels.DisablePersists.DisablePersistState,
+            me.VueConfig.data.labels.DisablePersists.DisablePersistParameters,
+            me.VueConfig.data.labels.DisablePersists.DisablePersistTransitionHistory
+          ];
+          if (formdata.DisablePersistState != undefined && formdata.DisablePersistState) {
+            me.VueConfig.data.checkedPersists.push(me.VueConfig.data.labels.DisablePersists.DisablePersistState);
+      }
+      if (formdata.DisablePersistParameters != undefined && formdata.DisablePersistParameters) {
+        me.VueConfig.data.checkedPersists.push(me.VueConfig.data.labels.DisablePersists.DisablePersistParameters);
+      }
+      if (formdata.DisablePersistTransitionHistory != undefined && formdata.DisablePersistTransitionHistory) {
+        me.VueConfig.data.checkedPersists.push(me.VueConfig.data.labels.DisablePersists.DisablePersistTransitionHistory);
+      }
+
+      var objectCorrect = me.VueConfig.methods.objectCorrect;
+
+      if ((formdata.PreExecutionImplementation.length > 0)
+        || (formdata.Annotations.length > 0)
+        || objectCorrect(formdata.ExecutionTimeout.Type)
+        || objectCorrect(formdata.IdleTimeout.Type)
+        || formdata.ExceptionsHandlers.length > 0
+        || me.VueConfig.data.disableAllPersist
+        || me.VueConfig.data.isIndeterminate) {
+        me.VueConfig.data.expertMode = true;
+      }
+    };
+
+
+        me.VueConfig.methods.activityNameRules = function(){
+            var res = me.requiredRule();
+
+            var validator = function(rule, value, callback){
+                var hasEqualNames = me.graph.data.Activities.find(function (a) {
+                    return a != me.linkItem && a.Name == value;
+                });
+
+                hasEqualNames ?  callback(new Error(rule.message)) : callback();
+            };
+            res.push({ validator: validator, message: WorkflowDesignerConstants.FieldMustBeUnique});
+            return res;
+        }
+
+    me.VueConfig.methods.validateField = function (rules, value) {
+
+      var value = arguments[arguments.length - 1];
+
+      for (var i = 0; i < arguments.length - 1; i++) {
+        var error = arguments[i](value);
+        if (error)
+          return error;
+      }
+
+
+        };
+
+    me.VueConfig.methods.notEmpty = function (value) {
+            var isValid = true;
+            if(!me.VueConfig.methods.objectCorrect(value))
+                isValid = false;
+
+
+      if (Object.prototype.toString.call(value) === '[object Array]') {
+        if (value.length < 1)
+          isValid = false;
+      }
+
+      if (!isValid)
+        return WorkflowDesignerConstants.FieldIsRequired;
+    }
+
+    me.VueConfig.methods.nameOnChange = function (value) {
+      var formdata = me.VueConfig.data.FormData;
+      if (formdata.State == me.VueConfig.data.prevName) {
+        formdata.State = value;
+      }
+      me.VueConfig.data.prevName = value;
+    };
+
+        me.VueConfig.methods.onInitialChange = function(){
+            var formdata = me.VueConfig.data.FormData;
+            formdata.IsFinal = formdata.IsInitial ? false : formdata.IsFinal;
+        };
+
+        me.VueConfig.methods.onFinalChange = function(){
+            var formdata = me.VueConfig.data.FormData;
+            formdata.IsInitial = formdata.IsFinal ? false : formdata.IsInitial;
+        };
+
+    me.VueConfig.methods.handleCheckAllPersistsChange = function (val) {
+      me.VueConfig.data.checkedPersists = val ? me.VueConfig.data.persists : [];
+      me.VueConfig.data.isIndeterminate = false;
+    };
+
+    me.VueConfig.methods.handleCheckedPersistsChange = function (value) {
+      let checkedCount = value.length;
+      me.VueConfig.data.disableAllPersist = checkedCount === me.VueConfig.data.persists.length;
+      me.VueConfig.data.isIndeterminate = checkedCount > 0 && checkedCount < me.VueConfig.data.persists.length;
+    }
+
+        me.VueConfig.methods.setCurrentItem = function(item) {
+            this.currentItem = item;
+        };
+        me.VueConfig.methods.querySearch = function(queryString, cb) {
+            if(me.VueConfig.data.readonly)
+                return cb([]);
+
+      var res = me.graph.getAutoCompleteSuggestions2('actionparameter', this.currentItem.ActionName, queryString);
+      cb(res);
+    };
+
+    me.VueConfig.methods.validate = function () {
+      var validateFunc = me.VueConfig.methods.validateField;
+      var data = me.VueConfig.data.FormData;
+      var notEmptyRule = me.VueConfig.methods.notEmpty;
+      for (var i = 0; i < data.Implementation.length; i++) {
+        var item = data.Implementation[i];
+        if (validateFunc(notEmptyRule, item.ActionName)) {
+                    return false;
+                }
+
+            }
+
+      for (var i = 0; i < data.PreExecutionImplementation.length; i++) {
+        var item = data.PreExecutionImplementation[i];
+        if (validateFunc(notEmptyRule, item.ActionName)) {
+          return false;
+        }
+      }
+
+      for (var i = 0; i < data.Annotations.length; i++) {
+        var item = data.Annotations[i];
+        if (validateFunc(notEmptyRule, item.Name)) {
+                    return false;
+                }
+            }
+
+      if (data.ExecutionTimeout.Type) {
+        if (validateFunc(notEmptyRule, data.ExecutionTimeout.Timer)) {
+          return false;
+        }
+      }
+      if (data.ExecutionTimeout.Timer) {
+        if (validateFunc(notEmptyRule, data.ExecutionTimeout.Type)) {
+                    return false;
+                }
+            }
+
+      if (data.ExecutionTimeout.Type == 'SetActivity' || data.ExecutionTimeout.Type == 'SetState') {
+        if (validateFunc(notEmptyRule, data.ExecutionTimeout.NameForSet)) {
+          return false;
+        }
+      }
+
+      if (data.ExecutionTimeout.Type == 'Retry') {
+        if (validateFunc(notEmptyRule, data.ExecutionTimeout.RetryCount)) {
+          return false;
+        }
+      }
+
+      if (data.IdleTimeout.Type) {
+        if (validateFunc(notEmptyRule, data.IdleTimeout.Timer)) {
+          return false;
+        }
+      }
+
+      if (data.IdleTimeout.Timer) {
+        if (validateFunc(notEmptyRule, data.IdleTimeout.Type)) {
+                    return false;
+                }
+            }
+
+      if (typeof data.IdleTimeout.Type != 'undefined') {
+        if (validateFunc(notEmptyRule, data.IdleTimeout.NameForSet)) {
+          return false;
+        }
+      }
+
+      for (var i = 0; i < data.ExceptionsHandlers.length; i++) {
+        var item = data.ExceptionsHandlers[i];
+        if (validateFunc(notEmptyRule, item.Exceptions) ||
+          validateFunc(notEmptyRule, item.Type)) {
+          return false;
+        }
+        if (item.Type == 'SetActivity' || item.Type == 'SetState') {
+          if (validateFunc(notEmptyRule, item.NameForSet)) {
+            return false;
+          }
+        }
+
+        if (item.Type == 'Retry') {
+          if (validateFunc(notEmptyRule, item.RetryCount)) {
+            return false;
+          }
+        }
+      }
+
+      return true;
+    };
+
+    me.VueConfig.methods.showUserComment = function () {
+      me.VueConfig.data.itemHasComment = true;
+    }
+
+    me.VueConfig.methods.addRow = function (items) {
+      items.push({});
+    };
+
+    me.VueConfig.methods.addActionRow = function (items) {
+      items.push({ActionParameter: ''});
+    };
+
+    me.VueConfig.methods.addAnnotationRow = function (items) {
+      items.push({JsonValue: null});
+    };
+
+    me.VueConfig.methods.removeRow = function (items, index) {
+      items.splice(index, 1);
+    };
+
+    me.VueConfig.methods.showjson = function (name, item) {
+      me.VueConfig.data.editItem = item;
+      me.editItem = item;
+
+      var onSuccess = function (value) {
+        if (me.editItem) {
+          me.editItem[name] = value;
+          me.VueConfig.data.editItem = undefined;
+          delete me.editItem;
+        }
+      };
+
+      var onClose = function (value) {
+        me.VueConfig.data.editItem = undefined;
+      };
+
+      var params = {
+        name: item['ActionName'],
+        type: ['Action']
+      };
+      me.VueConfig.data.jsonform = me.showjson(item[name], params, onSuccess, onClose, me.VueConfig.data.FormData);
+    };
+
+    me.VueConfig.methods.onSave = function () {
+      me.VueConfig.data.FormData.DisablePersistState = false;
+      me.VueConfig.data.FormData.DisablePersistParameters = false;
+      me.VueConfig.data.FormData.DisablePersistTransitionHistory = false;
+
+      const persists = me.VueConfig.data.checkedPersists;
+      for (var i = 0; i < persists.length; i++) {
+        switch (persists[i]) {
+          case  me.VueConfig.data.labels.DisablePersists.DisablePersistState:
+            me.VueConfig.data.FormData.DisablePersistState = true;
+            break;
+          case me.VueConfig.data.labels.DisablePersists.DisablePersistParameters:
+            me.VueConfig.data.FormData.DisablePersistParameters = true;
+            break;
+          case me.VueConfig.data.labels.DisablePersists.DisablePersistTransitionHistory:
+            me.VueConfig.data.FormData.DisablePersistTransitionHistory = true;
+            break;
+        }
+      }
+
+      if (this.$refs && WorkflowDesignerCommon.validateForms(this.$refs) && me.VueConfig.methods.validate()) {
+        me.onSuccess(me.VueConfig.data.FormData);
+        me.onClose(true);
+      }
+    };
+
+    me.VueConfig.methods.onClose = function () {
+      if (me.VueConfig.data.readonly) {
+        me.onClose(true);
+        return;
+      }
+
+      var originalItem = me.VueConfig.data.originalItem;
+      var item = me.VueConfig.data.FormData;
+
+      if (WorkflowDesignerCommon.deepCompare(originalItem, item)) {
+        me.onClose(true);
+      } else {
+        me.showConfirm();
+        return false;
+      }
+    };
+
+    me.VueConfig.methods.onCloseSave = function () {
+      me.onClose(true);
+    };
+
+    me.showConfirm = function () {
+      me.VueConfig.methods.showConfirm({
+        title: WorkflowDesignerConstants.DialogConfirmText,
+        message: WorkflowDesignerConstants.CloseWithoutSaving,
+        onSuccess: function () {
+          me.VueConfig.methods.onCloseSave();
+        }
+      });
+    }
+  }
+</script>
