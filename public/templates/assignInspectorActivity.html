@@ -14,9 +14,9 @@
       </el-form-item>
     </div>
     <!-- Inspector dropdown -->
-    <el-form-item :label="labels.Type" class="el-form-item" prop="Type" style="flex-grow: 1;">
-      <el-select v-model="FormData.Type" :placeholder="labels.Type" :disabled="readonly">
-        <el-option v-for="inspector in inspectors" :key="inspector.value" :label="inspector.label" :value="inspector.value"></el-option>
+    <el-form-item :label="labels.Inspector" class="el-form-item" prop="Inspector" style="flex-grow: 1;">
+      <el-select v-model="FormData.AssignedInspectorId" :placeholder="labels.Inspector" :disabled="readonly" @change="onInspectorChange">
+        <el-option v-for="inspector in inspectors" :key="inspector.key" :label="inspector.value" :value="inspector.key"></el-option>
       </el-select>
     </el-form-item>
   </div>
@@ -62,7 +62,10 @@
       states: [],
       editItem: null,
       itemHasComment: false,
-      FormData: {},
+      FormData: {
+        AssignedInspectorId: null,  
+        AssignedInspectorName: null  
+      },
       actionsStore: me.graph.data.CodeActions,
       disableAllPersist: false,
       isIndeterminate: false,
@@ -80,14 +83,15 @@
       fetch('http://localhost:5139/api/user/inspectors')
         .then(response => response.json())
         .then(data => {
+          console.log('Fetched inspector list:', data);
           if(data.length > 0){
-            me.VueConfig.data.inspectors = data.map(name => ({
-              label: name,
-              value: name
+            me.VueConfig.data.inspectors = data.map(ins => ({
+              value: ins.value,
+              key: ins.key
             }));
           }
           else{
-            me.VueConfig.data.inspectors = [{ label: 'No inspectors available', value: '' }];
+            me.VueConfig.data.inspectors = [{ value: 'No inspectors available', key: '' }];
           } 
         })
         .catch(error => {
@@ -121,6 +125,13 @@
           me.VueConfig.data.readonly = me.graph.Settings.readonly;
           me.VueConfig.data.actions = me.graph.getActionNames();
           me.VueConfig.data.itemHasComment = formdata.UserComment != null && formdata.UserComment.length > 0;
+      
+        // ✅ Extract AssignedInspectorId and Name from annotations
+        const assignedInspectorId = item.Annotations?.find(a => a.Name === "AssignedInspectorId")?.JsonValue || null;
+        const assignedInspectorName = item.Annotations?.find(a => a.Name === "AssignedInspectorName")?.JsonValue || null;
+
+        // ✅ Set default selected value in dropdown
+        formdata.AssignedInspectorId = Number(assignedInspectorId);
 
           const {activities, states} = me.VueConfig.data;
           me.graph.data.Activities.forEach(({Name, State}) => {
@@ -163,6 +174,12 @@
       }
     };
 
+    me.VueConfig.methods.onInspectorChange = function (selectedId) {
+      const selectedInspector = me.VueConfig.data.inspectors.find(ins => ins.key === selectedId);
+      
+      me.VueConfig.data.FormData.AssignedInspectorId = selectedId;
+      me.VueConfig.data.FormData.AssignedInspectorName = selectedInspector ? selectedInspector.value : null;
+    };
 
         me.VueConfig.methods.activityNameRules = function(){
             var res = me.requiredRule();
